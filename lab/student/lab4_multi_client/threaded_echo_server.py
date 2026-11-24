@@ -42,9 +42,15 @@ class ThreadedEchoServer:
         추가: self.server_sock.settimeout(1.0)
           → accept() 가 1초마다 socket.timeout 예외를 내며 깨어납니다.
             Windows 에서는 accept() 중 Ctrl+C 가 안 먹히는데, 이렇게 하면 종료가 잘 됩니다.
+        
+        raise NotImplementedError("STEP 1")
         """
         # ===== TODO: 이 부분을 완성하세요 (위 설명의 순서를 따라가세요) =====
-        raise NotImplementedError("STEP 1")
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind((self.host, self.port))
+        self.server_sock.listen()
+        self.server_sock.settimeout(1.0)
         self.running = True
         print(f"[서버] {self.host}:{self.port} 대기 중 (멀티 클라이언트)  Ctrl+C 종료")
 
@@ -54,6 +60,9 @@ class ThreadedEchoServer:
         반드시 with self.lock: 안에서 바꾸세요. (경쟁 조건 race condition 방지)
         """
         # ===== TODO: 이 부분을 완성하세요 (위 설명의 순서를 따라가세요) =====
+        with self.lock:
+            self.active += delta
+            return self.active
         raise NotImplementedError("STEP 2: with self.lock 안에서 self.active 변경")
 
     def handle_client(self, conn: socket.socket, addr: tuple) -> None:
@@ -67,6 +76,26 @@ class ThreadedEchoServer:
           - finally: conn.close(), self._change_active(-1)
         """
         name = threading.current_thread().name
+        count = self._change_active(+1)
+        print(f"[접속] {addr[0]}: {addr[1]} 담당: {name}")
+        conn.settimeout(IDLE_TIMEOUT)
+        try:
+            with conn:
+                while True:
+                    data = conn.recv(BUFFER_SIZE)
+                    if not data:
+                        break
+                    print(f"[수신] {addr[0]}:{addr[1]} → {data.decode('utf-8', errors='replace')!r}")
+                    conn.sendall(data)
+        except socket.timeout:
+            print(f"[타임아웃] {addr[0]}: {addr[1]} {IDLE_TIMEOUT} 초 동안 응답없음")
+        except ConnectionResetError:
+            print(f"[강제종료] {addr[0]}: {addr[1]} 연결이 갑자기 끊김(RST)")
+        finally:
+            conn.close()
+            count = self._change_active(-1)
+            print(f"[업무종료] {addr[0]}: {addr[1]} {name} 직원의 업무가 종료되었습니다.")
+
         # ===== TODO: 이 부분을 완성하세요 (위 설명의 순서를 따라가세요) =====
         raise NotImplementedError("STEP 3: 스레드에서 클라이언트 전담 처리")
 
@@ -85,6 +114,13 @@ class ThreadedEchoServer:
         self.start()
         try:
             # ===== TODO: 이 부분을 완성하세요 (위 설명의 순서를 따라가세요) =====
+            while self.running:
+                try:
+                    conn, addr = self.server_sock.accept()
+                except socket.timeout:
+                    continue                       # 1초마다 깨어나 Ctrl+C 확인
+                t = threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True)
+                t.start()
             raise NotImplementedError("STEP 4: accept → Thread(target=handle_client).start()")
         except KeyboardInterrupt:
             print("\n[서버] 종료합니다")
